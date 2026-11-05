@@ -1,0 +1,351 @@
+{
+  "name": "Website uptime monitor with Telegram alerts",
+  "nodes": [
+    {
+      "id": "b70be3e1-8dd3-44b8-b919-e9a8fdf0573a",
+      "name": "Every 5 minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "c8bf2c9a-9345-409a-a7ff-4d761818b20d",
+      "name": "Load last status",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "uptime_status"
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "e614e1dd-26bf-475b-ad06-2155bbb7514d",
+      "name": "Sites to check",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"telegramChatId\": \"<your-chat-id>\",\n  \"alertAfterFailures\": 2,\n  \"sites\": [\n    { \"name\": \"Website\", \"url\": \"https://www.example.com\", \"mustContain\": \"\" },\n    { \"name\": \"API health check\", \"url\": \"https://api.example.com/health\", \"mustContain\": \"ok\" }\n  ]\n}"
+      },
+      "executeOnce": true
+    },
+    {
+      "id": "d9572dc8-d65c-45e4-8fd0-73820df81312",
+      "name": "One item per site",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "fieldToSplitOut": "sites"
+      }
+    },
+    {
+      "id": "579bf328-bd25-48bf-866a-744ee5958aed",
+      "name": "Check site",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.url }}",
+        "options": {
+          "timeout": 10000,
+          "response": {
+            "response": {
+              "fullResponse": true,
+              "responseFormat": "text"
+            }
+          }
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "id": "021003d4-4f8d-4fe5-a0e0-a790bee02b1c",
+      "name": "Compare with last run",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Settings from the \"Sites to check\" node\nconst config = $('Sites to check').first().json;\nconst alertAfter = Number(config.alertAfterFailures) || 2;\n\n// What the previous run saved, keyed by URL\nconst previous = {};\nfor (const row of $('Load last status').all()) {\n  if (row.json.url) previous[row.json.url] = row.json;\n}\n\nconst now = new Date();\nconst escape = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n\nreturn $input.all().map((item, i) => {\n  const site = $('One item per site').itemMatching(i).json;\n  const res = item.json;\n\n  // Did this check pass?\n  let ok = true;\n  let detail;\n  if (res.error) {\n    ok = false;\n    const code = String((res.details && res.details.httpCode) || '');\n    detail = /^\\d{3}$/.test(code) ? 'HTTP ' + code : res.error.message || code || 'Request failed';\n  } else {\n    detail = 'HTTP ' + res.statusCode;\n    const raw = res.data ?? res.body ?? '';\n    const body = typeof raw === 'string' ? raw : JSON.stringify(raw);\n    if (site.mustContain && !body.includes(site.mustContain)) {\n      ok = false;\n      detail += ', but the page does not contain \"' + site.mustContain + '\"';\n    }\n  }\n\n  // Only call a site down after alertAfter failed checks in a row\n  const last = previous[site.url];\n  const lastStatus = last && last.status ? last.status : 'up';\n  const failures = ok ? 0 : (Number(last && last.failures) || 0) + 1;\n  const status = ok ? 'up' : failures >= alertAfter ? 'down' : lastStatus;\n  const changed = status !== lastStatus;\n  const changedAt = changed || !last ? now.toISOString() : last.changedAt;\n\n  let message = '';\n  if (changed && status === 'down') {\n    message = '<b>DOWN</b>: ' + escape(site.name) + '\\n' + escape(site.url) + '\\n' + escape(detail) + '\\nFailed ' + failures + ' checks in a row';\n  } else if (changed) {\n    const minutes = last && last.changedAt ? Math.round((now - new Date(last.changedAt)) / 60000) : null;\n    message = '<b>RECOVERED</b>: ' + escape(site.name) + '\\n' + escape(site.url) + (minutes !== null ? '\\nDown for about ' + minutes + ' min' : '');\n  }\n\n  return { json: { name: site.name, url: site.url, status, failures, detail, changed, changedAt, message } };\n});"
+      }
+    },
+    {
+      "id": "26d0579c-b675-499f-9f6b-f73e5de198f8",
+      "name": "Save status",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "upsert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "uptime_status"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "url",
+              "condition": "eq",
+              "keyValue": "={{ $json.url }}"
+            }
+          ]
+        },
+        "columns": {
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false,
+          "mappingMode": "defineBelow",
+          "matchingColumns": [],
+          "schema": [
+            {
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "url",
+              "id": "url",
+              "readOnly": false,
+              "removed": false,
+              "required": false,
+              "type": "string"
+            },
+            {
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "status",
+              "id": "status",
+              "readOnly": false,
+              "removed": false,
+              "required": false,
+              "type": "string"
+            },
+            {
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "failures",
+              "id": "failures",
+              "readOnly": false,
+              "removed": false,
+              "required": false,
+              "type": "number"
+            },
+            {
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "detail",
+              "id": "detail",
+              "readOnly": false,
+              "removed": false,
+              "required": false,
+              "type": "string"
+            },
+            {
+              "defaultMatch": false,
+              "display": true,
+              "displayName": "changedAt",
+              "id": "changedAt",
+              "readOnly": false,
+              "removed": false,
+              "required": false,
+              "type": "dateTime"
+            }
+          ],
+          "value": {
+            "url": "={{ $json.url }}",
+            "status": "={{ $json.status }}",
+            "failures": "={{ $json.failures }}",
+            "detail": "={{ $json.detail }}",
+            "changedAt": "={{ $json.changedAt }}"
+          }
+        }
+      }
+    },
+    {
+      "id": "c7641492-c7ea-43fc-ae53-d00e06e841de",
+      "name": "Status changed?",
+      "type": "n8n-nodes-base.filter",
+      "typeVersion": 2.3,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.changed }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "id": "a620cbc5-d7c7-4399-8cfe-1893e2d344a0",
+      "name": "Send Telegram alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1568,
+        192
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Sites to check').first().json.telegramChatId }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram account"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Every 5 minutes": {
+      "main": [
+        [
+          {
+            "node": "Load last status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load last status": {
+      "main": [
+        [
+          {
+            "node": "Sites to check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sites to check": {
+      "main": [
+        [
+          {
+            "node": "One item per site",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One item per site": {
+      "main": [
+        [
+          {
+            "node": "Check site",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check site": {
+      "main": [
+        [
+          {
+            "node": "Compare with last run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compare with last run": {
+      "main": [
+        [
+          {
+            "node": "Save status",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Status changed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Status changed?": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

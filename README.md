@@ -3,7 +3,9 @@
 
 Tested n8n workflow templates from [then8nblog.com](https://then8nblog.com), an independent blog about n8n. Each one was built and run end to end on a real n8n instance before it was published, and each folder has the workflow JSON plus a link to the full guide.
 
-The first templates are on their way. Browse them on [then8nblog.com/templates](https://then8nblog.com/templates).
+| Template | Tested on | Credentials | Guide |
+| --- | --- | --- | --- |
+| [Website uptime monitor in n8n with Telegram alerts](website-uptime-monitor) | n8n 2.39.8 | Telegram API | [Guide](https://then8nblog.com/templates/website-uptime-monitor) |
 
 ## How to use a template
 
