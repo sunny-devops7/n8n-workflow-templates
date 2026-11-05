@@ -5,6 +5,7 @@ Tested n8n workflow templates from [then8nblog.com](https://then8nblog.com), an 
 
 | Template | Tested on | Credentials | Guide |
 | --- | --- | --- | --- |
+| [n8n error workflow: a daily Telegram digest of failed runs](n8n-error-workflow-digest) | n8n 2.39.8 | Telegram API | [Guide](https://then8nblog.com/templates/n8n-error-workflow-digest) |
 | [Website uptime monitor in n8n with Telegram alerts](website-uptime-monitor) | n8n 2.39.8 | Telegram API | [Guide](https://then8nblog.com/templates/website-uptime-monitor) |
 
 ## How to use a template

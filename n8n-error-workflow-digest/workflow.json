@@ -1,0 +1,309 @@
+{
+  "name": "Daily digest of failed n8n executions",
+  "nodes": [
+    {
+      "id": "9ae4d787-a092-4b9f-9728-0b56310c49a6",
+      "name": "When a workflow fails",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "id": "ee52351d-a4be-4979-b2a3-eef6b4a794b5",
+      "name": "Log failure",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "failed_executions"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "workflowId": "={{ $json.workflow.id }}",
+            "workflowName": "={{ $json.workflow.name }}",
+            "executionId": "={{ $json.execution?.id ?? '' }}",
+            "executionUrl": "={{ $json.execution?.url ?? '' }}",
+            "lastNode": "={{ $json.execution?.lastNodeExecuted ?? $json.trigger?.error?.node?.name ?? '' }}",
+            "errorMessage": "={{ String($json.execution?.error?.message ?? $json.trigger?.error?.message ?? 'Unknown error').slice(0, 500) }}",
+            "failedAt": "={{ $now.toISO() }}"
+          },
+          "schema": [
+            {
+              "id": "workflowId",
+              "displayName": "workflowId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "workflowName",
+              "displayName": "workflowName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "executionId",
+              "displayName": "executionId",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "executionUrl",
+              "displayName": "executionUrl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "lastNode",
+              "displayName": "lastNode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "errorMessage",
+              "displayName": "errorMessage",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "failedAt",
+              "displayName": "failedAt",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "0b763d6f-a579-4edc-9f30-95f6167339d5",
+      "name": "Every morning at 8",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        240
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "daysInterval": 1,
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "add5e332-cb99-4900-beac-816f7c190202",
+      "name": "Report settings",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        240
+      ],
+      "parameters": {
+        "mode": "raw",
+        "jsonOutput": "{\n  \"telegramChatId\": \"<your-chat-id>\",\n  \"maxWorkflows\": 8\n}"
+      }
+    },
+    {
+      "id": "c1cef3dd-3c55-47cc-a7bf-d23e03cef2d4",
+      "name": "Load failures",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        448,
+        240
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "failed_executions"
+        },
+        "returnAll": true
+      },
+      "alwaysOutputData": true
+    },
+    {
+      "id": "ff0fac4b-93de-416e-978d-a99c77acfc2c",
+      "name": "Build digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        240
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Settings from the \"Report settings\" node\nconst settings = $('Report settings').first().json;\nconst maxWorkflows = Number(settings.maxWorkflows) || 8;\n\n// Rows logged by the error branch since the last report\nconst rows = $input.all().map((item) => item.json).filter((row) => row.id);\n\nconst escape = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\nconst cut = (s, n) => {\n  const text = String(s ?? '').replace(/\\s+/g, ' ').trim();\n  return text.length > n ? text.slice(0, n - 1) + '…' : text;\n};\nconst plural = (n, word) => n + ' ' + word + (n === 1 ? '' : 's');\n\nif (rows.length === 0) {\n  return [{ json: { failures: 0, workflows: 0, maxId: 0, message: '<b>n8n daily report</b>\\nNo failed executions since the last report.' } }];\n}\n\n// Group the failures by workflow and keep the newest one of each\nconst groups = {};\nfor (const row of rows) {\n  const key = row.workflowId || row.workflowName || 'unknown';\n  if (!groups[key]) groups[key] = { name: row.workflowName || 'Unknown workflow', count: 0, last: row };\n  const group = groups[key];\n  group.count += 1;\n  if (new Date(row.failedAt) >= new Date(group.last.failedAt)) group.last = row;\n}\nconst sorted = Object.values(groups).sort((a, b) => b.count - a.count);\n\nconst lines = [\n  '<b>n8n daily report</b>',\n  plural(rows.length, 'failed execution') + ' in ' + plural(sorted.length, 'workflow') + ' since the last report.',\n  '',\n];\n\n// Telegram messages are limited to 4096 characters, so stop well before that\nlet shown = 0;\nfor (const group of sorted) {\n  if (shown >= maxWorkflows) break;\n  const last = group.last;\n  const block = [\n    '<b>' + escape(cut(group.name, 80)) + '</b>: ' + plural(group.count, 'failure'),\n    'Last error' + (last.lastNode ? ' in ' + escape(cut(last.lastNode, 60)) : '') + ': ' + escape(cut(last.errorMessage, 200)),\n  ];\n  if (last.executionUrl) block.push('<a href=\"' + escape(last.executionUrl) + '\">Open the last failed execution</a>');\n  block.push('');\n  if (lines.join('\\n').length + block.join('\\n').length > 3500) break;\n  lines.push(...block);\n  shown += 1;\n}\nif (shown < sorted.length) lines.push('And ' + plural(sorted.length - shown, 'more workflow') + '. See the failed_executions table.');\n\nconst maxId = Math.max(...rows.map((row) => Number(row.id)));\nreturn [{ json: { failures: rows.length, workflows: sorted.length, maxId, message: lines.join('\\n').trim() } }];\n"
+      }
+    },
+    {
+      "id": "fa0578fb-e399-4fe0-a040-ddc2173ab910",
+      "name": "Send digest",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        896,
+        240
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $('Report settings').first().json.telegramChatId }}",
+        "text": "={{ $json.message }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML",
+          "disable_web_page_preview": true
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "name": "Telegram account"
+        }
+      }
+    },
+    {
+      "id": "f6ef416e-3fef-48c4-adb8-a9d48a3b77bb",
+      "name": "Clear reported rows",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        240
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "deleteRows",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "failed_executions"
+        },
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "lte",
+              "keyValue": "={{ $('Build digest').first().json.maxId }}"
+            }
+          ]
+        }
+      },
+      "executeOnce": true
+    }
+  ],
+  "connections": {
+    "When a workflow fails": {
+      "main": [
+        [
+          {
+            "node": "Log failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every morning at 8": {
+      "main": [
+        [
+          {
+            "node": "Report settings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Report settings": {
+      "main": [
+        [
+          {
+            "node": "Load failures",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load failures": {
+      "main": [
+        [
+          {
+            "node": "Build digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build digest": {
+      "main": [
+        [
+          {
+            "node": "Send digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send digest": {
+      "main": [
+        [
+          {
+            "node": "Clear reported rows",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
